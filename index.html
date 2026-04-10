@@ -474,6 +474,7 @@
 let bpm = 120;
 let playing = false;
 let timeSig = 4;
+let freeTime = false;
 let beatIndex = 0;
 let audioCtx = null;
 let nextNoteTime = 0;
@@ -482,7 +483,7 @@ let tapTimes = [];
 let currentPresetName = '';
 let soundType = 'click'; // click | beep | wood
 
-const timeSigs = [2,3,4,5,6,7,8];
+const timeSigs = [1,2,3,4,5,6,7,8];
 const sounds = ['click','beep','wood'];
 
 function initAudio() {
@@ -541,18 +542,19 @@ function playClick(time, isAccent) {
 
 function scheduler() {
   while (nextNoteTime < audioCtx.currentTime + 0.1) {
-    const isAccent = beatIndex === 0;
+    const isAccent = !freeTime && beatIndex === 0;
     playClick(nextNoteTime, isAccent);
-    scheduleBeatFlash(isAccent, nextNoteTime - audioCtx.currentTime);
+    const snapBeat = freeTime ? 0 : (beatIndex === 0 ? (freeTime ? 0 : timeSig - 1) : beatIndex - 1);
+    scheduleBeatFlash(isAccent, nextNoteTime - audioCtx.currentTime, snapBeat);
     nextNoteTime += 60.0 / bpm;
-    beatIndex = (beatIndex + 1) % timeSig;
+    beatIndex = freeTime ? 0 : (beatIndex + 1) % timeSig;
   }
   schedulerTimer = setTimeout(scheduler, 25);
 }
 
-function scheduleBeatFlash(isAccent, delay) {
+function scheduleBeatFlash(isAccent, delay, snapBeat) {
   setTimeout(() => {
-    highlightBeat(beatIndex === 0 ? timeSig - 1 : beatIndex - 1, isAccent);
+    highlightBeat(snapBeat, isAccent);
   }, Math.max(0, delay * 1000 - 15));
 }
 
@@ -571,9 +573,10 @@ function highlightBeat(idx, isAccent) {
 function buildBeatDots() {
   const row = document.getElementById('beat-row');
   row.innerHTML = '';
-  for (let i = 0; i < timeSig; i++) {
+  const count = freeTime ? 1 : timeSig;
+  for (let i = 0; i < count; i++) {
     const d = document.createElement('div');
-    d.className = 'beat-dot' + (i === 0 ? ' accent' : '');
+    d.className = 'beat-dot' + (!freeTime && i === 0 && timeSig > 1 ? ' accent' : '');
     row.appendChild(d);
   }
 }
@@ -624,9 +627,10 @@ function buildChips() {
   const tc = document.getElementById('timesig-chips');
   timeSigs.forEach(n => {
     const c = document.createElement('div');
-    c.className = 'chip' + (n === timeSig ? ' active' : '');
+    c.className = 'chip' + (!freeTime && n === timeSig ? ' active' : '');
     c.textContent = n + '/4';
     c.onclick = () => {
+      freeTime = false;
       timeSig = n;
       document.querySelectorAll('#timesig-chips .chip').forEach(x => x.classList.remove('active'));
       c.classList.add('active');
@@ -634,6 +638,16 @@ function buildChips() {
     };
     tc.appendChild(c);
   });
+  const freeChip = document.createElement('div');
+  freeChip.className = 'chip' + (freeTime ? ' active' : '');
+  freeChip.textContent = 'Free';
+  freeChip.onclick = () => {
+    freeTime = true;
+    document.querySelectorAll('#timesig-chips .chip').forEach(x => x.classList.remove('active'));
+    freeChip.classList.add('active');
+    buildBeatDots();
+  };
+  tc.appendChild(freeChip);
 
   const sc = document.getElementById('sound-chips');
   sounds.forEach(s => {
