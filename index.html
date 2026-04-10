@@ -128,7 +128,7 @@
 <div class="tab-bar">
     <button class="tab active" id="tab-play" onclick="switchTab('play')">Play</button>
     <button class="tab" id="tab-presets" onclick="switchTab('presets')">Presets</button>
-    <button class="tab" id="tab-new" onclick="newFromScratch()">Reset</button>
+    <button class="tab" id="tab-new" onclick="newFromScratch()">New</button>
 </div>
 
 <div class="page active" id="page-play">
@@ -215,7 +215,7 @@
         <h2>Add to Personal</h2>
         <div class="input-group">
             <label>Song Name</label>
-            <input type="text" id="add-title-input" placeholder="e.g. Don't Stop Me Now – Queen" maxlength="60" />
+            <input type="text" id="add-title-input" placeholder="e.g. Almost there" maxlength="60" />
         </div>
         <div class="input-group">
             <label>BPM</label>
@@ -464,7 +464,7 @@ function renderPresets() {
     if (collection.length === 0) {
         list.innerHTML = `<div style="text-align:center; padding:40px; color:var(--text2);">
             <div style="font-size:40px; margin-bottom:10px;">Empty</div>
-            <p>Save songs to see them here.</p>
+            <p>Add presets to see them here.</p>
         </div>`;
         return;
     }
@@ -513,7 +513,7 @@ function updateSongHeader() {
         header.style.display = 'block';
         nameEl.textContent = currentPresetName;
         if (currentCollection === 'party') {
-            badge.textContent = "Party"; badge.className = 'song-collection-badge party';
+            badge.textContent = "Jeds Party"; badge.className = 'song-collection-badge party';
             btn.textContent = '💾 Save to Personal';
         } else {
             badge.textContent = 'Personal'; badge.className = 'song-collection-badge personal';
