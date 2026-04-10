@@ -1,5 +1,5 @@
-const CACHE = 'metro-v1';
-const FILES = ['/metronome/', '/metronome/index.html', '/metronome/manifest.json'];
+const CACHE = 'jeds-metro-v1';
+const FILES = ['/', '/index.html', '/manifest.json', '/jeds-party.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
