@@ -1,5 +1,5 @@
 const CACHE = 'metro-v1';
-const FILES = ['/', '/index.html', '/manifest.json'];
+const FILES = ['/metronome/', '/metronome/index.html', '/metronome/manifest.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
