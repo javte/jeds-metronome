@@ -264,6 +264,7 @@ const timeSigs = [1,2,3,4,5,6,7,8];
 const sounds = ['click','beep','wood'];
 const AUDIO_PRIMER_GAIN = 0.00001;
 const AUDIO_PRIMER_DURATION = 0.001;
+const AUDIO_UNLOCK_EVENTS = ['pointerdown', 'touchstart', 'keydown'];
 
 /**
  * AUDIO ENGINE
@@ -287,11 +288,10 @@ function initAudio() {
         return audioCtx;
     })();
 
-    audioInitPromise = pendingInit.finally(() => {
-        audioInitPromise = null;
+    audioInitPromise = pendingInit;
+    return pendingInit.finally(() => {
+        if (audioInitPromise === pendingInit) audioInitPromise = null;
     });
-
-    return audioInitPromise;
 }
 
 function playClick(time, isAccent) {
@@ -631,8 +631,18 @@ function addPreset() {
 
 function escHtml(str) { return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
+function removeAudioUnlockListeners() {
+    AUDIO_UNLOCK_EVENTS.forEach(eventName => {
+        document.removeEventListener(eventName, unlockAudioFromGesture);
+    });
+}
+
 function unlockAudioFromGesture() {
-    if (audioUnlockPending || (audioCtx && audioCtx.state === 'running')) return;
+    if (audioUnlockPending || (audioCtx && audioCtx.state === 'running')) {
+        removeAudioUnlockListeners();
+        return;
+    }
+    removeAudioUnlockListeners();
     audioUnlockPending = true;
     initAudio()
         .catch(err => console.error('Unable to unlock audio.', err))
@@ -642,8 +652,9 @@ function unlockAudioFromGesture() {
 /**
  * INIT
  */
-['pointerdown', 'touchstart', 'keydown'].forEach(eventName => {
-    document.addEventListener(eventName, unlockAudioFromGesture, { once: true, passive: true });
+AUDIO_UNLOCK_EVENTS.forEach(eventName => {
+    const options = eventName === 'keydown' ? { once: true } : { once: true, passive: true };
+    document.addEventListener(eventName, unlockAudioFromGesture, options);
 });
 buildChips();
 buildBeatDots();
