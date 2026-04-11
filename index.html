@@ -269,17 +269,32 @@ const sounds = ['click','beep','wood'];
 // ---- Audio ----
 
 // On iOS, AudioContext must be created AND resumed synchronously
-// within the user gesture call stack — never inside an await.
+// within the user gesture call stack — never inside an await/async.
 function initAudioSync() {
     if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
-    // .resume() returns a Promise but we call it synchronously here
-    // so iOS registers it as part of the gesture. We don't need to await it.
     if (audioCtx.state === 'suspended') {
         audioCtx.resume();
     }
+    // Play a silent buffer to fully unlock audio on iOS
+    const silentBuf = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+    const src = audioCtx.createBufferSource();
+    src.buffer = silentBuf;
+    src.connect(audioCtx.destination);
+    src.start(0);
 }
+
+// Unlock audio on first user interaction (iOS requires this)
+let audioUnlocked = false;
+function unlockAudio() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    initAudioSync();
+}
+document.addEventListener('touchstart', unlockAudio, { once: true });
+document.addEventListener('touchend', unlockAudio, { once: true });
+document.addEventListener('click', unlockAudio, { once: true });
 
 function playClick(time, isAccent) {
     const ctx = audioCtx;
@@ -385,7 +400,7 @@ function buildChips() {
 
 // ---- Core logic ----
 
-async function togglePlay() {
+function togglePlay() {
     if (playing) {
         clearTimeout(schedulerTimer); playing = false; beatIndex = 0; schedulerTimer = null;
         document.querySelectorAll('.beat-dot').forEach(d => d.classList.remove('active'));
@@ -393,27 +408,31 @@ async function togglePlay() {
         document.getElementById('play-btn').classList.remove('playing');
         if (wakeLock) { wakeLock.release(); wakeLock = null; }
     } else {
-        // Synchronous init — must happen before any await to satisfy iOS gesture requirement
+        // Synchronous init — must stay synchronous (no async/await) for iOS gesture
         initAudioSync();
-
-        // Wait up to 500ms for context to reach 'running' state
-        for (let i = 0; i < 50; i++) {
-            if (audioCtx.state === 'running') break;
-            await new Promise(r => setTimeout(r, 10));
-        }
 
         playing = true; beatIndex = 0;
         nextNoteTime = audioCtx.currentTime + 0.05;
         scheduler();
         document.getElementById('play-btn').textContent = '⏹ Stop';
         document.getElementById('play-btn').classList.add('playing');
-        try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch(e) {}
+        // Request wake lock asynchronously (non-blocking)
+        if ('wakeLock' in navigator) {
+            navigator.wakeLock.request('screen').then(wl => { wakeLock = wl; }).catch(() => {});
+        }
     }
 }
 
-document.addEventListener('visibilitychange', async () => {
-    if (wakeLock && document.visibilityState === 'visible' && playing) {
-        try { wakeLock = await navigator.wakeLock.request('screen'); } catch(e) {}
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && playing) {
+        // Re-acquire wake lock after returning to foreground
+        if ('wakeLock' in navigator) {
+            navigator.wakeLock.request('screen').then(wl => { wakeLock = wl; }).catch(() => {});
+        }
+        // Resume AudioContext if iOS suspended it in background
+        if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
     }
 });
 
