@@ -7,6 +7,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Jeds Metronome">
     <meta name="theme-color" content="#1a1a2e">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon.svg">
     <title>🕰️ Jeds Metronome</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
@@ -268,33 +270,77 @@ const sounds = ['click','beep','wood'];
 
 // ---- Audio ----
 
-// On iOS, AudioContext must be created AND resumed synchronously
-// within the user gesture call stack — never inside an await/async.
-function initAudioSync() {
+// iOS Audio Strategy:
+// 1. On first touch, play a silent <audio> element to activate the iOS
+//    "media" audio session — this makes sound work even when the
+//    mute switch is on and prevents iOS from blocking Web Audio.
+// 2. Create & resume AudioContext + play a silent buffer (standard unlock).
+// 3. While metronome runs, a silent keepalive oscillator prevents iOS
+//    from suspending the audio context in the background.
+// 4. Scheduler uses 300ms look-ahead to tolerate iOS timer throttling.
+
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQIAAAAAAA==';
+let silentAudio = null;
+let keepAliveNode = null;
+
+function ensureAudioContext() {
     if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
     if (audioCtx.state === 'suspended') {
         audioCtx.resume();
     }
-    // Play a silent buffer to fully unlock audio on iOS
-    const silentBuf = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
-    const src = audioCtx.createBufferSource();
-    src.buffer = silentBuf;
-    src.connect(audioCtx.destination);
-    src.start(0);
 }
 
-// Unlock audio on first user interaction (iOS requires this)
+function unlockiOSAudio() {
+    // 1. Play silent HTML Audio to switch iOS audio session to "media" category.
+    //    This bypasses the mute switch and is required for PWA/standalone mode.
+    if (!silentAudio) {
+        silentAudio = new Audio(SILENT_WAV);
+        silentAudio.setAttribute('playsinline', '');
+        silentAudio.loop = true;
+    }
+    silentAudio.play().catch(() => {});
+
+    // 2. Create/resume AudioContext and play a silent buffer to unlock Web Audio.
+    ensureAudioContext();
+    try {
+        const buf = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        src.connect(audioCtx.destination);
+        src.start(0);
+    } catch (e) { /* ignore */ }
+}
+
+// Unlock on every type of user gesture iOS might recognise
 let audioUnlocked = false;
-function unlockAudio() {
+function handleFirstGesture() {
     if (audioUnlocked) return;
     audioUnlocked = true;
-    initAudioSync();
+    unlockiOSAudio();
 }
-document.addEventListener('touchstart', unlockAudio, { once: true });
-document.addEventListener('touchend', unlockAudio, { once: true });
-document.addEventListener('click', unlockAudio, { once: true });
+document.addEventListener('touchstart', handleFirstGesture, { once: true });
+document.addEventListener('touchend',   handleFirstGesture, { once: true });
+document.addEventListener('click',      handleFirstGesture, { once: true });
+
+// Keepalive: silent oscillator that prevents iOS from suspending AudioContext
+function startKeepAlive() {
+    if (keepAliveNode || !audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0.001;           // inaudible but keeps session alive
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(0);
+    keepAliveNode = { osc, gain };
+}
+function stopKeepAlive() {
+    if (!keepAliveNode) return;
+    try { keepAliveNode.osc.stop(); } catch (e) { /* ignore */ }
+    try { keepAliveNode.osc.disconnect(); keepAliveNode.gain.disconnect(); } catch (e) { /* ignore */ }
+    keepAliveNode = null;
+}
 
 function playClick(time, isAccent) {
     const ctx = audioCtx;
@@ -326,7 +372,8 @@ function playClick(time, isAccent) {
 }
 
 function scheduler() {
-    while (nextNoteTime < audioCtx.currentTime + 0.1) {
+    // 300ms look-ahead: iOS may throttle setTimeout, so schedule further ahead
+    while (nextNoteTime < audioCtx.currentTime + 0.3) {
         const isAccent = !freeTime && beatIndex === 0;
         playClick(nextNoteTime, isAccent);
         scheduleBeatFlash(nextNoteTime - audioCtx.currentTime, beatIndex);
@@ -406,13 +453,17 @@ function togglePlay() {
         document.querySelectorAll('.beat-dot').forEach(d => d.classList.remove('active'));
         document.getElementById('play-btn').textContent = '▶ Start';
         document.getElementById('play-btn').classList.remove('playing');
+        stopKeepAlive();
+        // Pause silent audio to release iOS audio session
+        if (silentAudio) silentAudio.pause();
         if (wakeLock) { wakeLock.release(); wakeLock = null; }
     } else {
-        // Synchronous init — must stay synchronous (no async/await) for iOS gesture
-        initAudioSync();
+        // Full iOS audio unlock — synchronous, in user gesture call stack
+        unlockiOSAudio();
 
         playing = true; beatIndex = 0;
         nextNoteTime = audioCtx.currentTime + 0.05;
+        startKeepAlive();
         scheduler();
         document.getElementById('play-btn').textContent = '⏹ Stop';
         document.getElementById('play-btn').classList.add('playing');
@@ -433,6 +484,9 @@ document.addEventListener('visibilitychange', () => {
         if (audioCtx && audioCtx.state === 'suspended') {
             audioCtx.resume();
         }
+        // Restart silent audio keepalive
+        if (silentAudio) silentAudio.play().catch(() => {});
+        startKeepAlive();
     }
 });
 
