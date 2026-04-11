@@ -650,7 +650,7 @@ function unlockAudioFromGesture() {
  * INIT
  */
 AUDIO_UNLOCK_EVENTS.forEach(eventName => {
-    document.addEventListener(eventName, unlockAudioFromGesture, { once: true, passive: true });
+    document.addEventListener(eventName, unlockAudioFromGesture, { passive: true });
 });
 buildChips();
 buildBeatDots();
