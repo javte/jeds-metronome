@@ -261,6 +261,8 @@ let activePresetsCollection = 'party';
 
 const timeSigs = [1,2,3,4,5,6,7,8];
 const sounds = ['click','beep','wood'];
+const AUDIO_PRIMER_GAIN = 0.00001;
+const AUDIO_PRIMER_DURATION = 0.001;
 
 /**
  * AUDIO ENGINE
@@ -270,19 +272,21 @@ function initAudio() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return Promise.reject(new Error('Web Audio API is not supported in this browser.'));
 
-    audioInitPromise = (async () => {
+    const pendingInit = (async () => {
         if (!audioCtx) audioCtx = new AudioContextClass();
         if (audioCtx.state !== 'running') await audioCtx.resume();
         const src = audioCtx.createBufferSource();
         src.buffer = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
         const gain = audioCtx.createGain();
-        gain.gain.value = 0.00001;
+        gain.gain.value = AUDIO_PRIMER_GAIN;
         src.connect(gain);
         gain.connect(audioCtx.destination);
         src.start(audioCtx.currentTime);
-        src.stop(audioCtx.currentTime + 0.001);
+        src.stop(audioCtx.currentTime + AUDIO_PRIMER_DURATION);
         return audioCtx;
-    })().finally(() => {
+    })();
+
+    audioInitPromise = pendingInit.finally(() => {
         audioInitPromise = null;
     });
 
