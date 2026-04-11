@@ -249,6 +249,8 @@ let timeSig = 4;
 let freeTime = false;
 let beatIndex = 0;
 let audioCtx = null;
+let audioInitPromise = null;
+let audioUnlockPending = false;
 let nextNoteTime = 0;
 let schedulerTimer = null;
 let tapTimes = [];
@@ -260,13 +262,40 @@ let activePresetsCollection = 'party';
 
 const timeSigs = [1,2,3,4,5,6,7,8];
 const sounds = ['click','beep','wood'];
+const AUDIO_PRIMER_GAIN = 0.00001;
+const AUDIO_PRIMER_DURATION = 0.001;
+const AUDIO_UNLOCK_EVENTS = ['pointerdown', 'touchstart', 'keydown'];
 
 /**
  * AUDIO ENGINE
  */
 function initAudio() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (audioInitPromise) return audioInitPromise;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return Promise.reject(new Error('Web Audio API is not supported in this browser.'));
+
+    const pendingInit = (async () => {
+        if (!audioCtx) audioCtx = new AudioContextClass();
+        if (audioCtx.state !== 'running') await audioCtx.resume();
+        const src = audioCtx.createBufferSource();
+        src.buffer = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+        const gain = audioCtx.createGain();
+        gain.gain.value = AUDIO_PRIMER_GAIN;
+        src.connect(gain);
+        gain.connect(audioCtx.destination);
+        src.onended = () => {
+            src.disconnect();
+            gain.disconnect();
+        };
+        src.start(audioCtx.currentTime);
+        src.stop(audioCtx.currentTime + AUDIO_PRIMER_DURATION);
+        return audioCtx;
+    })();
+
+    audioInitPromise = pendingInit;
+    return pendingInit.finally(() => {
+        if (audioInitPromise === pendingInit) audioInitPromise = null;
+    });
 }
 
 function playClick(time, isAccent) {
@@ -381,11 +410,19 @@ function buildChips() {
 async function togglePlay() {
     if (playing) {
         clearTimeout(schedulerTimer); playing = false; beatIndex = 0;
+        schedulerTimer = null;
         document.querySelectorAll('.beat-dot').forEach(d => d.classList.remove('active'));
         document.getElementById('play-btn').textContent = '▶ Start';
         document.getElementById('play-btn').classList.remove('playing');
     } else {
-        initAudio(); playing = true; beatIndex = 0;
+        try {
+            await initAudio();
+        } catch (err) {
+            console.error('Unable to start audio playback.', err);
+            return;
+        }
+        if (!audioCtx || audioCtx.state !== 'running') return;
+        playing = true; beatIndex = 0;
         nextNoteTime = audioCtx.currentTime + 0.05;
         scheduler();
         document.getElementById('play-btn').textContent = '⏹ Stop';
@@ -598,9 +635,27 @@ function addPreset() {
 
 function escHtml(str) { return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
+function removeAudioUnlockListeners() {
+    AUDIO_UNLOCK_EVENTS.forEach(eventName => {
+        document.removeEventListener(eventName, unlockAudioFromGesture);
+    });
+}
+
+function unlockAudioFromGesture() {
+    removeAudioUnlockListeners();
+    if (audioUnlockPending || (audioCtx && audioCtx.state === 'running')) return;
+    audioUnlockPending = true;
+    initAudio()
+        .catch(err => console.error('Unable to unlock audio.', err))
+        .finally(() => { audioUnlockPending = false; });
+}
+
 /**
  * INIT
  */
+AUDIO_UNLOCK_EVENTS.forEach(eventName => {
+    document.addEventListener(eventName, unlockAudioFromGesture, { passive: true });
+});
 buildChips();
 buildBeatDots();
 updateBpmName();
