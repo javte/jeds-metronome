@@ -283,6 +283,10 @@ function initAudio() {
         gain.gain.value = AUDIO_PRIMER_GAIN;
         src.connect(gain);
         gain.connect(audioCtx.destination);
+        src.onended = () => {
+            src.disconnect();
+            gain.disconnect();
+        };
         src.start(audioCtx.currentTime);
         src.stop(audioCtx.currentTime + AUDIO_PRIMER_DURATION);
         return audioCtx;
