@@ -250,6 +250,7 @@ let freeTime = false;
 let beatIndex = 0;
 let audioCtx = null;
 let audioInitPromise = null;
+let audioUnlockPending = false;
 let nextNoteTime = 0;
 let schedulerTimer = null;
 let tapTimes = [];
@@ -631,7 +632,11 @@ function addPreset() {
 function escHtml(str) { return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 function unlockAudioFromGesture() {
-    initAudio().catch(err => console.error('Unable to unlock audio.', err));
+    if (audioUnlockPending || (audioCtx && audioCtx.state === 'running')) return;
+    audioUnlockPending = true;
+    initAudio()
+        .catch(err => console.error('Unable to unlock audio.', err))
+        .finally(() => { audioUnlockPending = false; });
 }
 
 /**
