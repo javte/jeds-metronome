@@ -313,16 +313,15 @@ function unlockiOSAudio() {
     } catch (e) { /* ignore */ }
 }
 
-// Unlock on every type of user gesture iOS might recognise
-let audioUnlocked = false;
-function handleFirstGesture() {
-    if (audioUnlocked) return;
-    audioUnlocked = true;
+// Unlock audio on EVERY user gesture — iOS can re-suspend the context
+// after backgrounding, lock screen, or other interruptions, so we must
+// be ready to re-unlock each time the user taps play.
+function handleGesture() {
     unlockiOSAudio();
 }
-document.addEventListener('touchstart', handleFirstGesture, { once: true });
-document.addEventListener('touchend',   handleFirstGesture, { once: true });
-document.addEventListener('click',      handleFirstGesture, { once: true });
+document.addEventListener('touchstart', handleGesture, { passive: true });
+document.addEventListener('touchend',   handleGesture, { passive: true });
+document.addEventListener('click',      handleGesture);
 
 // Keepalive: silent oscillator that prevents iOS from suspending AudioContext
 function startKeepAlive() {
@@ -447,7 +446,7 @@ function buildChips() {
 
 // ---- Core logic ----
 
-function togglePlay() {
+async function togglePlay() {
     if (playing) {
         clearTimeout(schedulerTimer); playing = false; beatIndex = 0; schedulerTimer = null;
         document.querySelectorAll('.beat-dot').forEach(d => d.classList.remove('active'));
@@ -458,8 +457,24 @@ function togglePlay() {
         if (silentAudio) silentAudio.pause();
         if (wakeLock) { wakeLock.release(); wakeLock = null; }
     } else {
-        // Full iOS audio unlock — synchronous, in user gesture call stack
+        // Full iOS audio unlock — must happen synchronously in user gesture call stack
         unlockiOSAudio();
+
+        // CRITICAL: wait for AudioContext to actually resume before scheduling.
+        // Without this, sounds are scheduled into a suspended context and silently dropped.
+        try {
+            if (audioCtx && audioCtx.state !== 'running') {
+                await audioCtx.resume();
+            }
+            // Verify it actually resumed
+            if (audioCtx.state !== 'running') {
+                showAudioError();
+                return;
+            }
+        } catch (e) {
+            showAudioError();
+            return;
+        }
 
         playing = true; beatIndex = 0;
         nextNoteTime = audioCtx.currentTime + 0.05;
@@ -474,19 +489,35 @@ function togglePlay() {
     }
 }
 
-document.addEventListener('visibilitychange', () => {
+function showAudioError() {
+    const btn = document.getElementById('play-btn');
+    btn.textContent = '⚠ Tap here to retry';
+    btn.style.background = 'var(--accent2)';
+    setTimeout(() => {
+        btn.textContent = '▶ Start';
+        btn.style.background = '';
+    }, 2000);
+}
+
+document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible' && playing) {
         // Re-acquire wake lock after returning to foreground
         if ('wakeLock' in navigator) {
             navigator.wakeLock.request('screen').then(wl => { wakeLock = wl; }).catch(() => {});
         }
-        // Resume AudioContext if iOS suspended it in background
+        // Resume AudioContext if iOS suspended it in background — await it
         if (audioCtx && audioCtx.state === 'suspended') {
-            audioCtx.resume();
+            try { await audioCtx.resume(); } catch (e) { /* will retry on next gesture */ }
         }
         // Restart silent audio keepalive
         if (silentAudio) silentAudio.play().catch(() => {});
         startKeepAlive();
+
+        // If context still isn't running, stop and let user tap play again
+        if (audioCtx && audioCtx.state !== 'running') {
+            togglePlay(); // stop
+            showAudioError();
+        }
     }
 });
 
